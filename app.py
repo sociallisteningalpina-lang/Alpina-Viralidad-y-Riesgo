@@ -1,27 +1,26 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 
-# Configuración de la página
 st.set_page_config(
-    page_title="Alpina - Monitor de Riesgo Multi-Plataforma",
+    page_title="Alpina - Monitor de Riesgo Reputacional",
     page_icon="🛡️",
     layout="wide"
 )
 
 st.title("🛡️ Alpina: Dashboard de Alerta Temprana & Viralidad")
-st.markdown("Monitoreo automatizado de métricas reputacionales en tiempo real.")
+st.markdown("Monitoreo automatizado de métricas e impacto reputacional en tiempo real.")
 
-# Sidebar - Configuración
 st.sidebar.header("⚙️ Configuración del Feed")
 sheet_url = st.sidebar.text_input(
     "URL pública de Google Sheets",
-    help="Ingresa el link público de tu Google Sheet con acceso de lectura"
+    help="Ingresa el link público de tu Google Sheet"
 )
 
 plataforma = st.sidebar.selectbox(
-    "Red Social a Monitorear",
-    ["TikTok", "Instagram", "Facebook", "X"]
+    "Vista o Red Social a Monitorear",
+    ["📊 Seguimiento Total (Consolidado)", "TikTok", "Instagram", "Facebook", "X"]
 )
 
 st.sidebar.markdown("---")
@@ -42,115 +41,167 @@ def load_data(url, sheet_name):
     except Exception as e:
         return None
 
-# Mapeos prioritarios específicos por plataforma para evitar duplicados
 platform_mappings = {
     'TikTok': [
-        ('views', 'Vistas'),
-        ('likes', 'Likes'),
-        ('comments', 'Comentarios'),
-        ('shares', 'Compartidos'),
-        ('saves', 'Guardados'),
-        ('reposts', 'Reposts'),
-        ('scrapedAt', 'Fecha'),
-        ('postUrl', 'URL'),
-        ('inputUrl', 'URL'),
-        ('profileHandle', 'Autor'),
-        ('profileName', 'Autor')
+        ('views', 'Vistas'), ('likes', 'Likes'), ('comments', 'Comentarios'),
+        ('shares', 'Compartidos'), ('saves', 'Guardados'), ('reposts', 'Reposts'),
+        ('scrapedAt', 'Fecha'), ('postUrl', 'URL'), ('inputUrl', 'URL'),
+        ('profileHandle', 'Autor'), ('profileName', 'Autor')
     ],
     'Instagram': [
-        ('videoViewCount', 'Vistas'),
-        ('videoPlayCount', 'Vistas'),
-        ('likesCount', 'Likes'),
-        ('commentsCount', 'Comentarios'),
-        ('timestamp', 'Fecha'),
-        ('url', 'URL'),
-        ('inputUrl', 'URL'),
-        ('ownerUsername', 'Autor')
+        ('videoViewCount', 'Vistas'), ('videoPlayCount', 'Vistas'), ('likesCount', 'Likes'),
+        ('commentsCount', 'Comentarios'), ('timestamp', 'Fecha'), ('url', 'URL'),
+        ('inputUrl', 'URL'), ('ownerUsername', 'Autor')
     ],
     'X': [
-        ('viewCount', 'Vistas'),
-        ('likeCount', 'Likes'),
-        ('replyCount', 'Comentarios'),
-        ('retweetCount', 'Compartidos'),
-        ('quoteCount', 'Compartidos'),
-        ('bookmarkCount', 'Guardados'),
-        ('createdAt', 'Fecha'),
-        ('twitterUrl', 'URL'),
-        ('url', 'URL'),
-        ('author/userName', 'Autor'),
-        ('author/name', 'Autor')
+        ('viewCount', 'Vistas'), ('likeCount', 'Likes'), ('replyCount', 'Comentarios'),
+        ('retweetCount', 'Compartidos'), ('quoteCount', 'Compartidos'), ('bookmarkCount', 'Guardados'),
+        ('createdAt', 'Fecha'), ('twitterUrl', 'URL'), ('url', 'URL'),
+        ('author/userName', 'Autor'), ('author/name', 'Autor')
     ],
     'Facebook': [
-        ('views', 'Vistas'),
-        ('plays', 'Vistas'),
-        ('likes', 'Likes'),
-        ('comments', 'Comentarios'),
-        ('shares', 'Compartidos'),
-        ('scrapedAt', 'Fecha'),
-        ('contentUrl', 'URL'),
-        ('inputUrl', 'URL'),
-        ('profileUsername', 'Autor'),
+        ('views', 'Vistas'), ('plays', 'Vistas'), ('likes', 'Likes'),
+        ('comments', 'Comentarios'), ('shares', 'Compartidos'), ('scrapedAt', 'Fecha'),
+        ('contentUrl', 'URL'), ('inputUrl', 'URL'), ('profileUsername', 'Autor'),
         ('profileName', 'Autor')
     ]
 }
 
-if sheet_url:
-    df_raw = load_data(sheet_url, plataforma)
+def process_single_sheet(df_raw, p_name):
+    if df_raw is None or df_raw.empty:
+        return None
     
-    if df_raw is not None and not df_raw.empty:
-        mapping = platform_mappings.get(plataforma, [])
-        df_cols_lower = {str(c).lower(): c for c in df_raw.columns}
-        rename_dict = {}
-        already_mapped_targets = set()
-        
-        # Mapear garantizando 1 sola asignación por métrica
-        for src_key, target in mapping:
-            src_lower = src_key.lower()
-            if src_lower in df_cols_lower and target not in already_mapped_targets:
-                actual_col = df_cols_lower[src_lower]
-                rename_dict[actual_col] = target
-                already_mapped_targets.add(target)
-                
-        df = df_raw.rename(columns=rename_dict)
-        
-        # Garantizar que NO existan nombres de columnas duplicados en Pandas
-        cols = list(df.columns)
-        seen = {}
-        new_cols = []
-        for c in cols:
-            if c in seen:
-                seen[c] += 1
-                new_cols.append(f"{c}_{seen[c]}")
-            else:
-                seen[c] = 0
-                new_cols.append(c)
-        df.columns = new_cols
-        
-        # Asegurar columnas numéricas básicas
-        metric_cols = ["Vistas", "Likes", "Comentarios", "Compartidos", "Guardados"]
-        for col in metric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            else:
-                df[col] = 0.0
-
-        # Procesar columna Fecha
-        if "Fecha" in df.columns:
-            df["Fecha"] = pd.to_datetime(df["Fecha"], errors='coerce')
-            df = df.dropna(subset=["Fecha"]).sort_values("Fecha").reset_index(drop=True)
+    mapping = platform_mappings.get(p_name, [])
+    df_cols_lower = {str(c).lower(): c for c in df_raw.columns}
+    rename_dict = {}
+    already_mapped = set()
+    
+    for src_key, target in mapping:
+        src_lower = src_key.lower()
+        if src_lower in df_cols_lower and target not in already_mapped:
+            actual_col = df_cols_lower[src_lower]
+            rename_dict[actual_col] = target
+            already_mapped.add(target)
+            
+    df = df_raw.rename(columns=rename_dict)
+    
+    cols = list(df.columns)
+    seen = {}
+    new_cols = []
+    for c in cols:
+        if c in seen:
+            seen[c] += 1
+            new_cols.append(f"{c}_{seen[c]}")
         else:
-            df["Fecha"] = pd.date_range(end=pd.Timestamp.now(), periods=len(df), freq="30min")
+            seen[c] = 0
+            new_cols.append(c)
+    df.columns = new_cols
+    
+    metric_cols = ["Vistas", "Likes", "Comentarios", "Compartidos", "Guardados"]
+    for col in metric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        else:
+            df[col] = 0.0
 
-        if len(df) > 0:
+    if "Fecha" in df.columns:
+        df["Fecha"] = pd.to_datetime(df["Fecha"], errors='coerce')
+        df = df.dropna(subset=["Fecha"]).sort_values("Fecha").reset_index(drop=True)
+    else:
+        df["Fecha"] = pd.date_range(end=pd.Timestamp.now(), periods=len(df), freq="30min")
+
+    df["Plataforma"] = p_name
+    return df
+
+if sheet_url:
+    if plataforma == "📊 Seguimiento Total (Consolidado)":
+        all_sheets = ["TikTok", "Instagram", "Facebook", "X"]
+        processed_dfs = []
+        
+        for p in all_sheets:
+            raw_data = load_data(sheet_url, p)
+            p_df = process_single_sheet(raw_data, p)
+            if p_df is not None and not p_df.empty:
+                processed_dfs.append(p_df)
+                
+        if processed_dfs:
+            combined_df = pd.concat(processed_dfs, ignore_index=True)
+            latest_per_platform = combined_df.sort_values("Fecha").groupby("Plataforma").last().reset_index()
+            
+            # Calcular deltas para la suma global
+            total_vistas = latest_per_platform["Vistas"].sum()
+            total_likes = latest_per_platform["Likes"].sum()
+            total_comentarios = latest_per_platform["Comentarios"].sum()
+            total_compartidos = latest_per_platform["Compartidos"].sum()
+            total_guardados = latest_per_platform["Guardados"].sum()
+            
+            # Cálculo de velocidad global
+            velocidad_global = (total_comentarios * 0.5) + (total_compartidos * 1.0)
+            
+            st.subheader("🌐 Visión Consolidada Multi-Plataforma")
+            
+            col_status, col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(6)
+            
+            with col_status:
+                if velocidad_global >= umbral_rojo:
+                    st.error("🔴 **ALERTA CRÍTICA**\nRiesgo extendido")
+                elif velocidad_global >= umbral_amarillo:
+                    st.warning("🟡 **PRECAUCIÓN**\nCrecimiento global")
+                else:
+                    st.success("🟢 **ESTABLE**\nBajo control")
+                    
+            with col_k1:
+                st.metric("Vistas Consolidadas", f"{int(total_vistas):,}")
+            with col_k2:
+                st.metric("Likes Totales", f"{int(total_likes):,}")
+            with col_k3:
+                st.metric("Comentarios Totales", f"{int(total_comentarios):,}")
+            with col_k4:
+                st.metric("Compartidos Totales", f"{int(total_compartidos):,}")
+            with col_k5:
+                st.metric("Guardados Totales", f"{int(total_guardados):,}")
+
+            st.divider()
+
+            tab_summary, tab_charts, tab_raw = st.tabs(["📊 Resumen por Red Social", "📈 Comparativa Visual", "📋 Todos los Registros"])
+            
+            with tab_summary:
+                st.subheader("Estado Actual por Plataforma")
+                summary_table = latest_per_platform[["Plataforma", "Vistas", "Likes", "Comentarios", "Compartidos", "Guardados"]].copy()
+                st.dataframe(summary_table, use_container_width=True)
+
+            with tab_charts:
+                col_chart1, col_chart2 = st.columns(2)
+                
+                with col_chart1:
+                    st.subheader("Distribución de Comentarios por Red")
+                    fig_comm = px.pie(latest_per_platform, values='Comentarios', names='Plataforma', color='Plataforma', hole=0.4)
+                    st.plotly_chart(fig_comm, use_container_width=True)
+                    
+                with col_chart2:
+                    st.subheader("Distribución de Compartidos por Red")
+                    fig_share = px.pie(latest_per_platform, values='Compartidos', names='Plataforma', color='Plataforma', hole=0.4)
+                    st.plotly_chart(fig_share, use_container_width=True)
+
+            with tab_raw:
+                st.subheader("Consolidado Histórico Completo")
+                st.dataframe(combined_df.sort_values("Fecha", ascending=False), use_container_width=True)
+        else:
+            st.warning("⚠️ No se encontraron datos válidos en las pestañas de Google Sheets.")
+
+    else:
+        # Vista individual por red social
+        df_raw = load_data(sheet_url, plataforma)
+        df = process_single_sheet(df_raw, plataforma)
+        
+        if df is not None and not df.empty:
             df["Delta_Vistas"] = df["Vistas"].diff().fillna(df["Vistas"].iloc[0])
             df["Delta_Comentarios"] = df["Comentarios"].diff().fillna(df["Comentarios"].iloc[0])
             df["Delta_Compartidos"] = df["Compartidos"].diff().fillna(df["Compartidos"].iloc[0])
 
-            # Índice de Velocidad de Riesgo
             df["Velocidad_Riesgo"] = (df["Delta_Comentarios"] * 1.5) + (df["Delta_Compartidos"] * 2.0)
             ultima_velocidad = df["Velocidad_Riesgo"].iloc[-1]
             
-            # Información de la publicación
             info_text = []
             if "Autor" in df.columns and pd.notna(df['Autor'].iloc[-1]):
                 info_text.append(f"📌 **Autor:** `@{df['Autor'].iloc[-1]}`")
@@ -160,10 +211,9 @@ if sheet_url:
             if info_text:
                 st.caption(" | ".join(info_text))
             
-            # KPI & Semáforo de Estado
             st.subheader(f"🚦 Estado del Riesgo en {plataforma}")
             
-            col_status, col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5 = st.columns(6)
+            col_status, col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(6)
             
             with col_status:
                 if ultima_velocidad >= umbral_rojo:
@@ -173,20 +223,19 @@ if sheet_url:
                 else:
                     st.success("🟢 **ESTABLE**\nBajo control")
                     
-            with col_kpi1:
+            with col_k1:
                 st.metric("Vistas Totales", f"{int(df['Vistas'].iloc[-1]):,}", delta=f"+{int(df['Delta_Vistas'].iloc[-1])}")
-            with col_kpi2:
+            with col_k2:
                 st.metric("Likes", f"{int(df['Likes'].iloc[-1]):,}")
-            with col_kpi3:
+            with col_k3:
                 st.metric("Comentarios / Respuestas", f"{int(df['Comentarios'].iloc[-1]):,}", delta=f"+{int(df['Delta_Comentarios'].iloc[-1])}")
-            with col_kpi4:
+            with col_k4:
                 st.metric("Compartidos / Retweets", f"{int(df['Compartidos'].iloc[-1]):,}", delta=f"+{int(df['Delta_Compartidos'].iloc[-1])}")
-            with col_kpi5:
+            with col_k5:
                 st.metric("Guardados / Marcadores", f"{int(df['Guardados'].iloc[-1]):,}")
 
             st.divider()
 
-            # Pestañas de Visualización
             tab1, tab2, tab3 = st.tabs(["📈 Crecimiento Acumulado", "⚡ Velocidad e Índice de Riesgo", "📋 Registros en Vivo"])
 
             with tab1:
@@ -218,7 +267,5 @@ if sheet_url:
 
         else:
             st.warning(f"⚠️ La pestaña '{plataforma}' no contiene registros válidos aún.")
-    else:
-        st.error(f"No se pudo leer la pestaña '{plataforma}'. Verifica el enlace público del archivo.")
 else:
-    st.info("👈 Ingresa la URL pública de tu Google Sheet y selecciona la red social a monitorear.")
+    st.info("👈 Ingresa la URL pública de tu Google Sheet y selecciona la vista deseada.")
