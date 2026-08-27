@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+# Configuración de la página
 st.set_page_config(
     page_title="Alpina - Monitor de Riesgo Reputacional",
     page_icon="🛡️",
@@ -12,6 +13,7 @@ st.set_page_config(
 st.title("🛡️ Alpina: Dashboard de Alerta Temprana & Viralidad")
 st.markdown("Monitoreo automatizado de métricas e impacto reputacional en tiempo real.")
 
+# Sidebar - Configuración
 st.sidebar.header("⚙️ Configuración del Feed")
 sheet_url = st.sidebar.text_input(
     "URL pública de Google Sheets",
@@ -125,17 +127,15 @@ if sheet_url:
                 processed_dfs.append(p_df)
                 
         if processed_dfs:
-            combined_df = pd.concat(processed_dfs, ignore_index=True)
-            latest_per_platform = combined_df.sort_values("Fecha").groupby("Plataforma").last().reset_index()
+            combined_df = pd.concat(processed_dfs, ignore_index=True).sort_values("Fecha")
+            latest_per_platform = combined_df.groupby("Plataforma").last().reset_index()
             
-            # Calcular deltas para la suma global
             total_vistas = latest_per_platform["Vistas"].sum()
             total_likes = latest_per_platform["Likes"].sum()
             total_comentarios = latest_per_platform["Comentarios"].sum()
             total_compartidos = latest_per_platform["Compartidos"].sum()
             total_guardados = latest_per_platform["Guardados"].sum()
             
-            # Cálculo de velocidad global
             velocidad_global = (total_comentarios * 0.5) + (total_compartidos * 1.0)
             
             st.subheader("🌐 Visión Consolidada Multi-Plataforma")
@@ -163,12 +163,39 @@ if sheet_url:
 
             st.divider()
 
-            tab_summary, tab_charts, tab_raw = st.tabs(["📊 Resumen por Red Social", "📈 Comparativa Visual", "📋 Todos los Registros"])
+            tab_summary, tab_growth, tab_charts, tab_raw = st.tabs([
+                "📊 Resumen por Red", 
+                "📉 Crecimiento por Métrica", 
+                "🍩 Distribución por Red", 
+                "📋 Todos los Registros"
+            ])
             
             with tab_summary:
                 st.subheader("Estado Actual por Plataforma")
                 summary_table = latest_per_platform[["Plataforma", "Vistas", "Likes", "Comentarios", "Compartidos", "Guardados"]].copy()
                 st.dataframe(summary_table, use_container_width=True)
+
+            with tab_growth:
+                st.subheader("📈 Crecimiento Temporal por Métrica")
+                col_g1, col_g2 = st.columns(2)
+                
+                with col_g1:
+                    fig_views = px.line(combined_df, x="Fecha", y="Vistas", color="Plataforma", markers=True, title="Evolución de Vistas")
+                    fig_views.update_layout(template="plotly_white", hovermode="x unified")
+                    st.plotly_chart(fig_views, use_container_width=True)
+                    
+                    fig_comments = px.line(combined_df, x="Fecha", y="Comentarios", color="Plataforma", markers=True, title="Evolución de Comentarios")
+                    fig_comments.update_layout(template="plotly_white", hovermode="x unified")
+                    st.plotly_chart(fig_comments, use_container_width=True)
+
+                with col_g2:
+                    fig_likes = px.line(combined_df, x="Fecha", y="Likes", color="Plataforma", markers=True, title="Evolución de Likes")
+                    fig_likes.update_layout(template="plotly_white", hovermode="x unified")
+                    st.plotly_chart(fig_likes, use_container_width=True)
+
+                    fig_shares = px.line(combined_df, x="Fecha", y="Compartidos", color="Plataforma", markers=True, title="Evolución de Compartidos")
+                    fig_shares.update_layout(template="plotly_white", hovermode="x unified")
+                    st.plotly_chart(fig_shares, use_container_width=True)
 
             with tab_charts:
                 col_chart1, col_chart2 = st.columns(2)
@@ -190,7 +217,6 @@ if sheet_url:
             st.warning("⚠️ No se encontraron datos válidos en las pestañas de Google Sheets.")
 
     else:
-        # Vista individual por red social
         df_raw = load_data(sheet_url, plataforma)
         df = process_single_sheet(df_raw, plataforma)
         
