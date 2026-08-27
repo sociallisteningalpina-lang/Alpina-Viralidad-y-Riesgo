@@ -16,7 +16,7 @@ st.markdown("Monitoreo automatizado de métricas reputacionales en tiempo real."
 st.sidebar.header("⚙️ Configuración del Feed")
 sheet_url = st.sidebar.text_input(
     "URL pública de Google Sheets",
-    help="Ingresa el link público de tu Google Sheet"
+    help="Ingresa el link público de tu Google Sheet con acceso de lectura"
 )
 
 plataforma = st.sidebar.selectbox(
@@ -42,68 +42,99 @@ def load_data(url, sheet_name):
     except Exception as e:
         return None
 
-if sheet_url:
-    df = load_data(sheet_url, plataforma)
-    
-    if df is not None and not df.empty:
-        # Mapeo exhaustivo extraído directamente de la estructura de tus scrapers
-        column_mapping = {
-            # TikTok / Facebook / Genérico
-            'views': 'Vistas',
-            'plays': 'Vistas',
-            'likes': 'Likes',
-            'comments': 'Comentarios',
-            'shares': 'Compartidos',
-            'saves': 'Guardados',
-            'reposts': 'Reposts',
-            'scrapedat': 'Fecha',
-            'posturl': 'URL',
-            'contenturl': 'URL',
-            'inputurl': 'URL',
-            'profilehandle': 'Autor',
-            'profilename': 'Autor',
-            'profileusername': 'Autor',
-            
-            # Instagram
-            'likescount': 'Likes',
-            'commentscount': 'Comentarios',
-            'videoviewcount': 'Vistas',
-            'videoplaycount': 'Vistas',
-            'timestamp': 'Fecha',
-            'url': 'URL',
-            'ownerusername': 'Autor',
-            
-            # X (Twitter)
-            'likecount': 'Likes',
-            'replycount': 'Comentarios',
-            'retweetcount': 'Compartidos',
-            'quotecount': 'Compartidos',
-            'bookmarkcount': 'Guardados',
-            'viewcount': 'Vistas',
-            'createdat': 'Fecha',
-            'twitterurl': 'URL',
-            'author/username': 'Autor',
-            'author/name': 'Autor'
-        }
-        
-        # Mapear nombres ignorando diferencias de mayúsculas/minúsculas
-        df_cols_lower = {str(c).lower(): c for c in df.columns}
-        rename_dict = {}
-        for key, target in column_mapping.items():
-            if key in df_cols_lower:
-                rename_dict[df_cols_lower[key]] = target
+# Mapeos prioritarios específicos por plataforma para evitar duplicados
+platform_mappings = {
+    'TikTok': [
+        ('views', 'Vistas'),
+        ('likes', 'Likes'),
+        ('comments', 'Comentarios'),
+        ('shares', 'Compartidos'),
+        ('saves', 'Guardados'),
+        ('reposts', 'Reposts'),
+        ('scrapedAt', 'Fecha'),
+        ('postUrl', 'URL'),
+        ('inputUrl', 'URL'),
+        ('profileHandle', 'Autor'),
+        ('profileName', 'Autor')
+    ],
+    'Instagram': [
+        ('videoViewCount', 'Vistas'),
+        ('videoPlayCount', 'Vistas'),
+        ('likesCount', 'Likes'),
+        ('commentsCount', 'Comentarios'),
+        ('timestamp', 'Fecha'),
+        ('url', 'URL'),
+        ('inputUrl', 'URL'),
+        ('ownerUsername', 'Autor')
+    ],
+    'X': [
+        ('viewCount', 'Vistas'),
+        ('likeCount', 'Likes'),
+        ('replyCount', 'Comentarios'),
+        ('retweetCount', 'Compartidos'),
+        ('quoteCount', 'Compartidos'),
+        ('bookmarkCount', 'Guardados'),
+        ('createdAt', 'Fecha'),
+        ('twitterUrl', 'URL'),
+        ('url', 'URL'),
+        ('author/userName', 'Autor'),
+        ('author/name', 'Autor')
+    ],
+    'Facebook': [
+        ('views', 'Vistas'),
+        ('plays', 'Vistas'),
+        ('likes', 'Likes'),
+        ('comments', 'Comentarios'),
+        ('shares', 'Compartidos'),
+        ('scrapedAt', 'Fecha'),
+        ('contentUrl', 'URL'),
+        ('inputUrl', 'URL'),
+        ('profileUsername', 'Autor'),
+        ('profileName', 'Autor')
+    ]
+}
 
-        df = df.rename(columns=rename_dict)
+if sheet_url:
+    df_raw = load_data(sheet_url, plataforma)
+    
+    if df_raw is not None and not df_raw.empty:
+        mapping = platform_mappings.get(plataforma, [])
+        df_cols_lower = {str(c).lower(): c for c in df_raw.columns}
+        rename_dict = {}
+        already_mapped_targets = set()
         
-        # Normalizar columnas numéricas requeridas
+        # Mapear garantizando 1 sola asignación por métrica
+        for src_key, target in mapping:
+            src_lower = src_key.lower()
+            if src_lower in df_cols_lower and target not in already_mapped_targets:
+                actual_col = df_cols_lower[src_lower]
+                rename_dict[actual_col] = target
+                already_mapped_targets.add(target)
+                
+        df = df_raw.rename(columns=rename_dict)
+        
+        # Garantizar que NO existan nombres de columnas duplicados en Pandas
+        cols = list(df.columns)
+        seen = {}
+        new_cols = []
+        for c in cols:
+            if c in seen:
+                seen[c] += 1
+                new_cols.append(f"{c}_{seen[c]}")
+            else:
+                seen[c] = 0
+                new_cols.append(c)
+        df.columns = new_cols
+        
+        # Asegurar columnas numéricas básicas
         metric_cols = ["Vistas", "Likes", "Comentarios", "Compartidos", "Guardados"]
         for col in metric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             else:
-                df[col] = 0
+                df[col] = 0.0
 
-        # Procesar columna de Fecha / Marca de tiempo
+        # Procesar columna Fecha
         if "Fecha" in df.columns:
             df["Fecha"] = pd.to_datetime(df["Fecha"], errors='coerce')
             df = df.dropna(subset=["Fecha"]).sort_values("Fecha").reset_index(drop=True)
@@ -111,26 +142,25 @@ if sheet_url:
             df["Fecha"] = pd.date_range(end=pd.Timestamp.now(), periods=len(df), freq="30min")
 
         if len(df) > 0:
-            # Cálculo de incrementos (Deltas) por ciclo
             df["Delta_Vistas"] = df["Vistas"].diff().fillna(df["Vistas"].iloc[0])
             df["Delta_Comentarios"] = df["Comentarios"].diff().fillna(df["Comentarios"].iloc[0])
             df["Delta_Compartidos"] = df["Compartidos"].diff().fillna(df["Compartidos"].iloc[0])
 
-            # Índice de Velocidad de Riesgo combinando Comentarios (x1.5) y Compartidos/Retweets (x2.0)
+            # Índice de Velocidad de Riesgo
             df["Velocidad_Riesgo"] = (df["Delta_Comentarios"] * 1.5) + (df["Delta_Compartidos"] * 2.0)
             ultima_velocidad = df["Velocidad_Riesgo"].iloc[-1]
             
-            # Encabezado con información del post
+            # Información de la publicación
             info_text = []
-            if "Autor" in df.columns and str(df['Autor'].iloc[-1]) != 'nan':
+            if "Autor" in df.columns and pd.notna(df['Autor'].iloc[-1]):
                 info_text.append(f"📌 **Autor:** `@{df['Autor'].iloc[-1]}`")
-            if "URL" in df.columns and str(df['URL'].iloc[-1]) != 'nan':
+            if "URL" in df.columns and pd.notna(df['URL'].iloc[-1]):
                 info_text.append(f"🔗 **Link:** {df['URL'].iloc[-1]}")
             
             if info_text:
                 st.caption(" | ".join(info_text))
             
-            # --- SECCIÓN KPI Y ESTADO DE ALERTA ---
+            # KPI & Semáforo de Estado
             st.subheader(f"🚦 Estado del Riesgo en {plataforma}")
             
             col_status, col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5 = st.columns(6)
@@ -156,7 +186,7 @@ if sheet_url:
 
             st.divider()
 
-            # --- VISUALIZACIONES ---
+            # Pestañas de Visualización
             tab1, tab2, tab3 = st.tabs(["📈 Crecimiento Acumulado", "⚡ Velocidad e Índice de Riesgo", "📋 Registros en Vivo"])
 
             with tab1:
