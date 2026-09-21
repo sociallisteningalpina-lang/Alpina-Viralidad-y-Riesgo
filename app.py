@@ -38,8 +38,8 @@ st.sidebar.header("⚙️ Ajustes de Crisis")
 
 cobertura_actual = st.sidebar.radio(
     "Cobertura Mediática",
-    ["Local", "Nacional / Internacional"],
-    help="Define si la crisis tiene alcance mediático Local (+6 pts en M.I.A.)"
+    ["Sin Cobertura", "Local", "Regional", "Nacional"],
+    help="Puntaje M.I.A.: Nacional (+15 pts), Regional (+10 pts), Local (+6 pts), Sin Cobertura (0 pts)."
 )
 
 st.sidebar.markdown("---")
@@ -49,7 +49,7 @@ if st.sidebar.button("🔄 Capturar Nuevo Corte", type="primary"):
 # ==========================================
 # 3. CALCULADORA M.I.A. V3
 # ==========================================
-def calcular_semaforo(menciones, vistas, engagement, prom_vistas_hora, cobertura="Local"):
+def calcular_semaforo(menciones, vistas, engagement, prom_vistas_hora, cobertura="Sin Cobertura"):
     # 1. Puntos Vistas (50%)
     if vistas < 100000: pts_vistas = 2
     elif vistas <= 1000000: pts_vistas = 6
@@ -70,8 +70,16 @@ def calcular_semaforo(menciones, vistas, engagement, prom_vistas_hora, cobertura
 
     alcance_redes = (pts_vistas * 0.5) + (pts_eng * 0.3) + (pts_men * 0.2)
 
-    # 4. Cobertura Mediática
-    pts_cob = 6 if cobertura.lower() == "local" else 0
+    # 4. Cobertura Mediática (Lectura automatizada V3)
+    cob_str = cobertura.lower().strip()
+    if "nacional" in cob_str:
+        pts_cob = 15
+    elif "regional" in cob_str:
+        pts_cob = 10
+    elif "local" in cob_str:
+        pts_cob = 6
+    else:
+        pts_cob = 0
 
     # 5. Velocidad (Vistas/Hora)
     if prom_vistas_hora <= 0: pts_vel = 0
@@ -198,7 +206,6 @@ else:
             # ==========================================
             st.subheader("🚨 Alerta del Modelo de Incidentes Alpina (M.I.A.)")
 
-            # Columnas con anchos ajustados para evitar texto recortado
             c_status, c_score, c_menc, c_views, c_eng = st.columns([1.3, 1.1, 1, 1, 1])
 
             with c_status:
