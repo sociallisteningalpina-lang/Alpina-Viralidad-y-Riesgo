@@ -5,74 +5,47 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 
-# Configuración de página
+# ==========================================
+# 1. CONFIGURACIÓN INTERNA DE LA CRISIS
+# ==========================================
+API_KEY = '5ec7c022ffd040ed'
+BASE_URL = 'https://api.youscan.io/api/external/'
+TOPICO_CRISIS = "Crisis Prueba"
+
+headers = {
+    'X-API-KEY': API_KEY,
+    'Accept': 'application/json'
+}
+
+# Configuración de página en Streamlit
 st.set_page_config(
-    page_title="Alpina - Monitor M.I.A. (YouScan)",
+    page_title="Alpina - Monitor de Incidentes (M.I.A.)",
     page_icon="🚨",
     layout="wide"
 )
 
-# Título Principal
-st.title("🚨 Alpina: Monitor de Crisis M.I.A. V3")
-st.caption("Conexión Directa a la API de YouScan | Modelo de Incidentes Alpina")
+st.title("🚨 Alpina: Reporte de Crisis M.I.A. V3")
+st.caption(f"Monitoreo en tiempo real vía YouScan | Tópico: **{TOPICO_CRISIS}**")
 
 # ==========================================
-# 1. BARRA LATERAL (CONFIGURACIÓN)
+# 2. BARRA LATERAL (ÚNICO PARÁMETRO)
 # ==========================================
-st.sidebar.header("⚙️ Configuración YouScan & Crisis")
-
-api_key = st.sidebar.text_input(
-    "YouScan API Key",
-    value="5ec7c022ffd040ed",
-    type="password",
-    help="Clave de acceso para la API externa de YouScan"
-)
-
-base_url = "https://api.youscan.io/api/external/"
-headers = {
-    'X-API-KEY': api_key,
-    'Accept': 'application/json'
-}
-
-# Obtener lista de tópicos dinámicamente desde YouScan
-@st.cache_data(ttl=300)
-def fetch_topics(key):
-    try:
-        res = requests.get(base_url + 'topics', headers={'X-API-KEY': key, 'Accept': 'application/json'}, timeout=10)
-        if res.status_code == 200:
-            topics_data = res.json().get('topics', res.json())
-            return {t['name']: t['id'] for t in topics_data if 'name' in t and 'id' in t}
-    except Exception:
-        pass
-    return {}
-
-topics_dict = fetch_topics(api_key)
-
-if topics_dict:
-    topico_seleccionado = st.sidebar.selectbox("Seleccionar Tópico de Crisis", list(topics_dict.keys()))
-    topic_id = topics_dict[topico_seleccionado]
-else:
-    topico_input = st.sidebar.text_input("Nombre del Tópico", value="Crisis Prueba")
-    topic_id = None
+st.sidebar.header("⚙️ Ajustes de Crisis")
 
 cobertura_actual = st.sidebar.radio(
     "Cobertura Mediática",
     ["Local", "Nacional / Internacional"],
-    help="Añade +6 puntos si la crisis tiene cobertura mediática Local según la fórmula M.I.A."
+    help="Define si la crisis tiene alcance mediático Local (+6 pts en M.I.A.)"
 )
 
-prom_vistas_hora_input = st.sidebar.number_input(
-    "Velocidad Estimada (Vistas/Hora)",
-    min_value=0,
-    value=0,
-    step=1000,
-    help="Ingresa el promedio de crecimiento de vistas/hora para calcular la velocidad M.I.A."
-)
+st.sidebar.markdown("---")
+if st.sidebar.button("🔄 Capturar Nuevo Corte", type="primary"):
+    st.cache_data.clear()
 
 # ==========================================
-# 2. CALCULADORA M.I.A. (V3)
+# 3. CALCULADORA M.I.A. V3 (EXACTA)
 # ==========================================
-def calcular_semaforo(menciones, vistas, engagement, prom_vistas_hora, cobertura):
+def calcular_semaforo(menciones, vistas, engagement, prom_vistas_hora, cobertura="Local"):
     # 1. Puntos Vistas (50%)
     if vistas < 100000: pts_vistas = 2
     elif vistas <= 1000000: pts_vistas = 6
@@ -91,11 +64,10 @@ def calcular_semaforo(menciones, vistas, engagement, prom_vistas_hora, cobertura
     elif menciones <= 800: pts_men = 8
     else: pts_men = 15
 
-    # Alcance Redes
     alcance_redes = (pts_vistas * 0.5) + (pts_eng * 0.3) + (pts_men * 0.2)
 
     # 4. Cobertura Mediática
-    pts_cob = 6 if "local" in cobertura.lower() else 0
+    pts_cob = 6 if cobertura.lower() == "local" else 0
 
     # 5. Velocidad (Vistas/Hora)
     if prom_vistas_hora <= 0: pts_vel = 0
@@ -107,48 +79,72 @@ def calcular_semaforo(menciones, vistas, engagement, prom_vistas_hora, cobertura
     indice = alcance_redes + pts_cob + pts_vel
 
     if indice < 15:
-        color_texto = "🟢 RIESGO BAJO"
+        color = "🟢 RIESGO BAJO"
         nivel = "low"
     elif indice < 30:
-        color_texto = "🟡 RIESGO MEDIO"
+        color = "🟡 RIESGO MEDIO"
         nivel = "medium"
     else:
-        color_texto = "🔴 RIESGO ALTO (CRÍTICO)"
+        color = "🔴 RIESGO ALTO (CRÍTICO)"
         nivel = "high"
 
-    return round(indice, 1), color_texto, nivel, round(alcance_redes, 1), pts_cob, pts_vel
+    return round(indice, 1), color, nivel, round(alcance_redes, 1), pts_cob, pts_vel
+
+def detectar_plataforma(url):
+    u = str(url).lower()
+    if 'tiktok' in u: return 'TikTok'
+    elif 'instagram' in u: return 'Instagram'
+    elif 'twitter' in u or 'x.com' in u: return 'X (Twitter)'
+    elif 'facebook' in u: return 'Facebook'
+    elif 'youtube' in u: return 'YouTube'
+    else: return 'Prensa / Web'
+
+# Inicializar sesión para guardar el historial de cortes en memoria
+if 'historial_horas' not in st.session_state:
+    st.session_state['historial_horas'] = []
 
 # ==========================================
-# 3. EXTRACCIÓN DE DATOS DE YOUSCAN
+# 4. CONEXIÓN Y PROCESAMIENTO
 # ==========================================
-if st.sidebar.button("🔄 Actualizar Datos Ahora", type="primary"):
-    st.cache_data.clear()
+@st.cache_data(ttl=60)
+def obtener_topic_id():
+    try:
+        res = requests.get(BASE_URL + 'topics', headers=headers, timeout=10)
+        if res.status_code == 200:
+            topics = res.json().get('topics', res.json())
+            for t in topics:
+                if t.get('name') == TOPICO_CRISIS:
+                    return t.get('id')
+    except Exception:
+        pass
+    return None
 
-if topic_id or api_key:
-    # Definir rango de fechas
+topic_id = obtener_topic_id()
+
+if not topic_id:
+    st.error(f"❌ No se encontró el tópico '{TOPICO_CRISIS}' en YouScan. Verifica el nombre o la API Key.")
+else:
     ahora = datetime.utcnow()
     from_iso = "2026-01-01T00:00:00Z"
     to_iso = ahora.strftime('%Y-%m-%dT%H:%M:%SZ')
+    hora_colombia = (ahora - timedelta(hours=5)).strftime('%H:%M')
 
-    # Endpoints de YouScan
-    url_metrics = f"{base_url}topics/{topic_id}/statistics/metrics"
-    url_sents = f"{base_url}topics/{topic_id}/statistics/sentiments"
-    url_mentions = f"{base_url}topics/{topic_id}/mentions"
-    params_date = {'from': from_iso, 'to': to_iso}
+    url_metrics = f"{BASE_URL}topics/{topic_id}/statistics/metrics"
+    url_sents = f"{BASE_URL}topics/{topic_id}/statistics/sentiments"
+    url_mentions = f"{BASE_URL}topics/{topic_id}/mentions"
 
     try:
-        res_m = requests.get(url_metrics, headers=headers, params=params_date)
-        res_s = requests.get(url_sents, headers=headers, params=params_date)
-        
+        res_m = requests.get(url_metrics, headers=headers, params={'from': from_iso, 'to': to_iso})
+        res_s = requests.get(url_sents, headers=headers, params={'from': from_iso, 'to': to_iso})
+
         if res_m.status_code == 200 and res_s.status_code == 200:
             data_m = res_m.json()
             data_s = res_s.json()
 
             menciones_totales = data_m.get('totalCount', 0)
-            vistas_totales = data_m.get('viewsCount', 0)
-            engagement_total = data_m.get('totalEngagement', 0)
+            vistas = data_m.get('viewsCount', 0)
+            engagement = data_m.get('totalEngagement', 0)
 
-            # Sentimientos
             pos, neg, neu = 0, 0, 0
             for s in data_s.get('sentiments', []):
                 s_name = str(s.get('name', '')).lower()
@@ -156,109 +152,205 @@ if topic_id or api_key:
                 elif 'neg' in s_name: neg = s.get('count', 0)
                 elif 'neu' in s_name: neu = s.get('count', 0)
 
-            # Calcular Alerta M.I.A.
-            indice_mia, status_str, nivel_risk, pts_alc, pts_cob, pts_vel = calcular_semaforo(
-                menciones_totales, vistas_totales, engagement_total, prom_vistas_hora_input, cobertura_actual
+            # Agregar registro al historial temporal si cambió la hora o es primera captura
+            historial = st.session_state['historial_horas']
+            if not historial or historial[-1]['Hora de Corte'] != hora_colombia or historial[-1]['Visualizaciones'] != vistas:
+                historial.append({
+                    "Hora de Corte": hora_colombia,
+                    "Menciones Totales": menciones_totales,
+                    "Visualizaciones": vistas,
+                    "Engagement": engagement,
+                    "Positivas": pos,
+                    "Negativas": neg,
+                    "Neutrales": neu
+                })
+
+            df_historial = pd.DataFrame(historial)
+
+            # CÁLCULOS AUTOMÁTICOS DE VELOCIDAD
+            prom_vistas_hora = 0.0
+            crec_menciones_prom = 0.0
+            crec_eng_prom = 0.0
+
+            if len(df_historial) > 1:
+                crecimiento_vistas = df_historial['Visualizaciones'].diff().dropna()
+                crecimiento_menciones = df_historial['Menciones Totales'].diff().dropna()
+                crecimiento_eng = df_historial['Engagement'].diff().dropna()
+
+                prom_vistas_hora = float(crecimiento_vistas.mean())
+                crec_menciones_prom = float(crecimiento_menciones.mean())
+                crec_eng_prom = float(crecimiento_eng.mean())
+
+            # CÁLCULO DE LA ALERTA M.I.A.
+            indice_mia, color_semaforo, nivel_risk, pts_alc, pts_cob, pts_vel = calcular_semaforo(
+                menciones=menciones_totales,
+                vistas=vistas,
+                engagement=engagement,
+                prom_vistas_hora=prom_vistas_hora,
+                cobertura=cobertura_actual
             )
 
-            # --- DESPLIEGUE DEL SEMÁFORO ---
-            st.subheader("🚦 Alerta Modelo de Incidentes Alpina (M.I.A.)")
-            
+            # ==========================================
+            # 5. DESPLIEGUE EN PANTALLA
+            # ==========================================
+            st.subheader("🚨 Alerta del Modelo de Incidentes Alpina (M.I.A.)")
+
             c_status, c_score, c_menc, c_views, c_eng = st.columns(5)
-            
+
             with c_status:
                 if nivel_risk == "high":
-                    st.error(f"**ESTADO ACTUAL**\n### {status_str}")
+                    st.error(f"**ESTADO ACTUAL**\n### {color_semaforo}")
                 elif nivel_risk == "medium":
-                    st.warning(f"**ESTADO ACTUAL**\n### {status_str}")
+                    st.warning(f"**ESTADO ACTUAL**\n### {color_semaforo}")
                 else:
-                    st.success(f"**ESTADO ACTUAL**\n### {status_str}")
-                    
+                    st.success(f"**ESTADO ACTUAL**\n### {color_semaforo}")
+
             with c_score:
-                st.metric("Puntaje M.I.A.", f"{indice_mia} / 45.0 pts")
+                st.metric("Puntaje Total", f"{indice_mia} / 45.0 pts")
                 st.caption(f"Alcance: {pts_alc} | Cob: {pts_cob} | Vel: {pts_vel}")
             with c_menc:
-                st.metric("Menciones Totales", f"{menciones_totales:,}")
+                st.metric("Menciones Totales", f"{menciones_totales:,}", delta=f"+{crec_menciones_prom:.1f}/hr" if len(df_historial) > 1 else None)
             with c_views:
-                st.metric("Visualizaciones", f"{vistas_totales:,}")
+                st.metric("Visualizaciones", f"{vistas:,}", delta=f"+{prom_vistas_hora:.1f}/hr" if len(df_historial) > 1 else None)
             with c_eng:
-                st.metric("Engagement Total", f"{engagement_total:,}")
+                st.metric("Engagement", f"{engagement:,}", delta=f"+{crec_eng_prom:.1f}/hr" if len(df_historial) > 1 else None)
 
+            st.caption("Escala M.I.A.: 🟢 **BAJO** (< 15 pts) | 🟡 **MEDIO** (15 a 29 pts) | 🔴 **ALTO** (30 a 45 pts)")
             st.divider()
 
-            # --- SECCIÓN GRÁFICAS DE SENTIMIENTO Y DESGLOSE ---
-            col_chart1, col_chart2 = st.columns([1, 1])
-
-            with col_chart1:
-                st.subheader("📊 Distribución del Sentimiento")
-                df_sent = pd.DataFrame({
-                    "Sentimiento": ["Positivo", "Neutral", "Negativo"],
-                    "Menciones": [pos, neu, neg]
-                })
-                fig_sent = px.pie(
-                    df_sent, values="Menciones", names="Sentimiento",
-                    color="Sentimiento",
-                    color_discrete_map={"Positivo": "#2ca02c", "Neutral": "#7f7f7f", "Negativo": "#d62728"},
-                    hole=0.4
-                )
-                fig_sent.update_layout(template="plotly_white")
-                st.plotly_chart(fig_sent, width="stretch")
-
-            with col_chart2:
-                st.subheader("⚙️ Composición del Puntaje M.I.A.")
-                df_pts = pd.DataFrame({
-                    "Componente": ["Alcance Redes (50/30/20)", "Cobertura Mediática", "Velocidad (Vistas/Hora)"],
-                    "Puntos": [pts_alc, pts_cob, pts_vel]
-                })
-                fig_pts = px.bar(
-                    df_pts, x="Componente", y="Puntos", text="Puntos",
-                    color="Componente",
-                    color_discrete_sequence=["#1f77b4", "#ff7f0e", "#d62728"]
-                )
-                fig_pts.update_layout(template="plotly_white", showlegend=False)
-                st.plotly_chart(fig_pts, width="stretch")
-
-            # --- CONVERSATION STREAM (POSTS MÁS VIRALES) ---
-            st.divider()
-            st.subheader("🔥 Conversation Stream: Publicaciones Más Virales")
-
-            res_mentions = requests.get(url_mentions, headers=headers, params={'from': from_iso, 'to': to_iso, 'size': 100})
+            # --- CONVERSATION STREAM EXTRACTION ---
+            res_mentions = requests.get(url_mentions, headers=headers, params={'from': from_iso, 'to': to_iso, 'size': 500})
+            stream_menciones = []
             if res_mentions.status_code == 200:
-                mentions_list = res_mentions.json().get('mentions', [])
-                stream_data = []
-                
-                for m in mentions_list:
+                for m in res_mentions.json().get('mentions', []):
                     eng_data = m.get('engagement', {})
                     total_eng_post = (
                         int(eng_data.get('likes', 0) or 0) +
                         int(eng_data.get('comments', 0) or 0) +
                         int(eng_data.get('reposts', 0) or eng_data.get('shares', 0) or 0)
                     )
-                    stream_data.append({
-                        "Fecha": m.get('published'),
+                    u_link = m.get('url', '')
+                    plat = detectar_plataforma(u_link)
+                    stream_menciones.append({
+                        "Fecha de Publicación": m.get('published'),
+                        "Plataforma": plat,
                         "Autor": m.get('author', {}).get('name', 'Desconocido'),
                         "Impacto Viral": total_eng_post,
                         "Sentimiento": m.get('sentiment', 'neutral'),
                         "Texto": m.get('text', ''),
-                        "URL": m.get('url', '')
+                        "URL": u_link
                     })
 
-                if stream_data:
-                    df_stream = pd.DataFrame(stream_data).drop_duplicates(subset=['URL']).sort_values(by="Impacto Viral", ascending=False)
+            df_stream = pd.DataFrame(stream_menciones)
+            if not df_stream.empty:
+                df_stream = df_stream.drop_duplicates(subset=['URL']).sort_values(by="Impacto Viral", ascending=False)
+
+            # ==========================================
+            # 6. PESTAÑAS Y VISUALIZACIONES COMPLETAS
+            # ==========================================
+            tab_evol, tab_redes, tab_sent, tab_stream = st.tabs([
+                "📈 Evolución Temporal", 
+                "📱 Desglose por Red Social", 
+                "📊 Sentimiento & M.I.A.", 
+                "🔥 Conversation Stream"
+            ])
+
+            # TAB 1: EVOLUCIÓN TEMPORAL (LAS 3 GRÁFICAS DEL CÓDIGO ORIGINAL)
+            with tab_evol:
+                st.subheader("📈 Curvas de Acumulado de la Crisis")
+                if len(df_historial) >= 1:
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+                        fig_m = px.line(df_historial, x="Hora de Corte", y="Menciones Totales", markers=True, title="Acumulado Menciones", color_discrete_sequence=['red'])
+                        fig_m.update_layout(template="plotly_white")
+                        st.plotly_chart(fig_m, width="stretch")
+
+                    with col2:
+                        fig_v = px.line(df_historial, x="Hora de Corte", y="Visualizaciones", markers=True, title="Acumulado Vistas", color_discrete_sequence=['orange'])
+                        fig_v.update_layout(template="plotly_white")
+                        st.plotly_chart(fig_v, width="stretch")
+
+                    with col3:
+                        fig_e = px.line(df_historial, x="Hora de Corte", y="Engagement", markers=True, title="Acumulado Engagement", color_discrete_sequence=['blue'])
+                        fig_e.update_layout(template="plotly_white")
+                        st.plotly_chart(fig_e, width="stretch")
+
+                    st.markdown("#### 📑 Histórico de Capturas de Pantalla")
+                    st.dataframe(df_historial.sort_values("Hora de Corte", ascending=False), width="stretch")
+
+            # TAB 2: DESGLOSE POR RED SOCIAL
+            with tab_redes:
+                st.subheader("📱 Métricas e Impacto por Red Social / Canal")
+                if not df_stream.empty:
+                    col_r1, col_r2 = st.columns(2)
+
+                    with col_r1:
+                        fig_plat_count = px.pie(
+                            df_stream, names="Plataforma", title="Distribución de Publicaciones por Plataforma",
+                            hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel
+                        )
+                        st.plotly_chart(fig_plat_count, width="stretch")
+
+                    with col_r2:
+                        fig_plat_eng = px.bar(
+                            df_stream.groupby("Plataforma")["Impacto Viral"].sum().reset_index(),
+                            x="Plataforma", y="Impacto Viral", color="Plataforma",
+                            title="Impacto Viral Acumulado por Red Social", text="Impacto Viral"
+                        )
+                        fig_plat_eng.update_layout(template="plotly_white")
+                        st.plotly_chart(fig_plat_eng, width="stretch")
+
+                    filtro_plat = st.multiselect("Filtrar publicaciones por Red Social:", df_stream["Plataforma"].unique(), default=df_stream["Plataforma"].unique())
+                    df_filtered = df_stream[df_stream["Plataforma"].isin(filtro_plat)]
+                    st.dataframe(df_filtered[['Plataforma', 'Autor', 'Impacto Viral', 'Sentimiento', 'Texto', 'URL']], width="stretch")
+                else:
+                    st.info("Cargando publicaciones por red social...")
+
+            # TAB 3: SENTIMIENTO & COMPONENTES M.I.A.
+            with tab_sent:
+                col_s1, col_s2 = st.columns(2)
+
+                with col_s1:
+                    st.subheader("📊 Distribución del Sentimiento")
+                    df_sent = pd.DataFrame({
+                        "Sentimiento": ["Positivo", "Neutral", "Negativo"],
+                        "Menciones": [pos, neu, neg]
+                    })
+                    fig_sent = px.pie(
+                        df_sent, values="Menciones", names="Sentimiento", color="Sentimiento",
+                        color_discrete_map={"Positivo": "#2ca02c", "Neutral": "#7f7f7f", "Negativo": "#d62728"},
+                        hole=0.4
+                    )
+                    fig_sent.update_layout(template="plotly_white")
+                    st.plotly_chart(fig_sent, width="stretch")
+
+                with col_s2:
+                    st.subheader("⚙️ Desglose de Puntos M.I.A.")
+                    df_pts = pd.DataFrame({
+                        "Componente": ["Alcance Redes (50/30/20)", "Cobertura Mediática", "Velocidad Vistas/Hr"],
+                        "Puntos": [pts_alc, pts_cob, pts_vel]
+                    })
+                    fig_pts = px.bar(
+                        df_pts, x="Componente", y="Puntos", text="Puntos", color="Componente",
+                        color_discrete_sequence=["#1f77b4", "#ff7f0e", "#d62728"]
+                    )
+                    fig_pts.update_layout(template="plotly_white", showlegend=False)
+                    st.plotly_chart(fig_pts, width="stretch")
+
+            # TAB 4: CONVERSATION STREAM (PUBLICACIONES MÁS VIRALES)
+            with tab_stream:
+                st.subheader("🔥 Publicaciones Más Virales Absolutas (Conversation Stream)")
+                if not df_stream.empty:
                     st.dataframe(
-                        df_stream,
+                        df_stream[['Fecha de Publicación', 'Plataforma', 'Autor', 'Impacto Viral', 'Sentimiento', 'Texto', 'URL']].head(30),
                         column_config={
                             "URL": st.column_config.LinkColumn("Enlace Directo")
                         },
                         width="stretch"
                     )
                 else:
-                    st.info("No se encontraron menciones para el rango seleccionado.")
-            else:
-                st.warning("No se pudo obtener el Conversation Stream desde YouScan.")
-
-        else:
-            st.error(f"Error consultando la API de YouScan. Código HTTP: {res_m.status_code}")
+                    st.info("No se han capturado publicaciones para este tópico aún.")
 
     except Exception as e:
-        st.error(f"Error de conexión con YouScan: {e}")
+        st.error(f"Error procesando los datos de YouScan: {e}")
