@@ -24,11 +24,15 @@ st.set_page_config(
     layout="wide"
 )
 
+# Título e Introducción M.I.A.
 st.title("🚨 Alpina: Reporte de Crisis M.I.A. V3")
-st.caption(f"Monitoreo en tiempo real vía YouScan | Tópico: **{TOPICO_CRISIS}**")
+st.markdown("""
+> ℹ️ **M.I.A.** es el **Modelo de Incidentes Alpina** que nos permite determinar el riesgo de viralidad en redes sociales de cualquier tema en tiempo real.
+""")
+st.caption(f"Monitoreo automatizado vía YouScan | Tópico activo: **{TOPICO_CRISIS}**")
 
 # ==========================================
-# 2. BARRA LATERAL (ÚNICO PARÁMETRO)
+# 2. BARRA LATERAL (AJUSTES)
 # ==========================================
 st.sidebar.header("⚙️ Ajustes de Crisis")
 
@@ -43,7 +47,7 @@ if st.sidebar.button("🔄 Capturar Nuevo Corte", type="primary"):
     st.cache_data.clear()
 
 # ==========================================
-# 3. CALCULADORA M.I.A. V3 (EXACTA)
+# 3. CALCULADORA M.I.A. V3
 # ==========================================
 def calcular_semaforo(menciones, vistas, engagement, prom_vistas_hora, cobertura="Local"):
     # 1. Puntos Vistas (50%)
@@ -99,12 +103,12 @@ def detectar_plataforma(url):
     elif 'youtube' in u: return 'YouTube'
     else: return 'Prensa / Web'
 
-# Inicializar sesión para guardar el historial de cortes en memoria
+# Guardar historial en sesión de Streamlit
 if 'historial_horas' not in st.session_state:
     st.session_state['historial_horas'] = []
 
 # ==========================================
-# 4. CONEXIÓN Y PROCESAMIENTO
+# 4. EXTRACCIÓN DE DATOS DE YOUSCAN
 # ==========================================
 @st.cache_data(ttl=60)
 def obtener_topic_id():
@@ -122,7 +126,7 @@ def obtener_topic_id():
 topic_id = obtener_topic_id()
 
 if not topic_id:
-    st.error(f"❌ No se encontró el tópico '{TOPICO_CRISIS}' en YouScan. Verifica el nombre o la API Key.")
+    st.error(f"❌ No se encontró el tópico '{TOPICO_CRISIS}' en YouScan. Verifica el nombre exacto.")
 else:
     ahora = datetime.utcnow()
     from_iso = "2026-01-01T00:00:00Z"
@@ -152,7 +156,6 @@ else:
                 elif 'neg' in s_name: neg = s.get('count', 0)
                 elif 'neu' in s_name: neu = s.get('count', 0)
 
-            # Agregar registro al historial temporal si cambió la hora o es primera captura
             historial = st.session_state['historial_horas']
             if not historial or historial[-1]['Hora de Corte'] != hora_colombia or historial[-1]['Visualizaciones'] != vistas:
                 historial.append({
@@ -181,7 +184,7 @@ else:
                 crec_menciones_prom = float(crecimiento_menciones.mean())
                 crec_eng_prom = float(crecimiento_eng.mean())
 
-            # CÁLCULO DE LA ALERTA M.I.A.
+            # CALCULADORA M.I.A.
             indice_mia, color_semaforo, nivel_risk, pts_alc, pts_cob, pts_vel = calcular_semaforo(
                 menciones=menciones_totales,
                 vistas=vistas,
@@ -191,11 +194,12 @@ else:
             )
 
             # ==========================================
-            # 5. DESPLIEGUE EN PANTALLA
+            # 5. DESPLIEGUE VISUAL
             # ==========================================
             st.subheader("🚨 Alerta del Modelo de Incidentes Alpina (M.I.A.)")
 
-            c_status, c_score, c_menc, c_views, c_eng = st.columns(5)
+            # Columnas con anchos ajustados para evitar texto recortado
+            c_status, c_score, c_menc, c_views, c_eng = st.columns([1.3, 1.1, 1, 1, 1])
 
             with c_status:
                 if nivel_risk == "high":
@@ -206,8 +210,8 @@ else:
                     st.success(f"**ESTADO ACTUAL**\n### {color_semaforo}")
 
             with c_score:
-                st.metric("Puntaje Total", f"{indice_mia} / 45.0 pts")
-                st.caption(f"Alcance: {pts_alc} | Cob: {pts_cob} | Vel: {pts_vel}")
+                st.metric("Puntaje Total", f"{indice_mia} pts")
+                st.caption(f"Máx: 45.0 pts | Alc: {pts_alc} | Cob: {pts_cob} | Vel: {pts_vel}")
             with c_menc:
                 st.metric("Menciones Totales", f"{menciones_totales:,}", delta=f"+{crec_menciones_prom:.1f}/hr" if len(df_historial) > 1 else None)
             with c_views:
@@ -215,10 +219,16 @@ else:
             with c_eng:
                 st.metric("Engagement", f"{engagement:,}", delta=f"+{crec_eng_prom:.1f}/hr" if len(df_historial) > 1 else None)
 
-            st.caption("Escala M.I.A.: 🟢 **BAJO** (< 15 pts) | 🟡 **MEDIO** (15 a 29 pts) | 🔴 **ALTO** (30 a 45 pts)")
+            # Escala M.I.A. Clarificada
+            st.markdown("""
+            > **Escala M.I.A. de Evaluación de Riesgo:**  
+            > 🟢 **BAJO (< 15 pts):** Impacto controlado y monitoreo estándar.  
+            > 🟡 **MEDIO (15 a 29 pts):** Crecimiento acelerado; evaluar acciones de contención.  
+            > 🔴 **ALTO (30 a 45 pts):** Viralidad crítica; activar protocolo de crisis inmediatamente.
+            """)
             st.divider()
 
-            # --- CONVERSATION STREAM EXTRACTION ---
+            # --- CONVERSATION STREAM ---
             res_mentions = requests.get(url_mentions, headers=headers, params={'from': from_iso, 'to': to_iso, 'size': 500})
             stream_menciones = []
             if res_mentions.status_code == 200:
@@ -246,7 +256,7 @@ else:
                 df_stream = df_stream.drop_duplicates(subset=['URL']).sort_values(by="Impacto Viral", ascending=False)
 
             # ==========================================
-            # 6. PESTAÑAS Y VISUALIZACIONES COMPLETAS
+            # 6. PESTAÑAS
             # ==========================================
             tab_evol, tab_redes, tab_sent, tab_stream = st.tabs([
                 "📈 Evolución Temporal", 
@@ -255,7 +265,7 @@ else:
                 "🔥 Conversation Stream"
             ])
 
-            # TAB 1: EVOLUCIÓN TEMPORAL (LAS 3 GRÁFICAS DEL CÓDIGO ORIGINAL)
+            # TAB 1: EVOLUCIÓN TEMPORAL
             with tab_evol:
                 st.subheader("📈 Curvas de Acumulado de la Crisis")
                 if len(df_historial) >= 1:
@@ -304,10 +314,8 @@ else:
                     filtro_plat = st.multiselect("Filtrar publicaciones por Red Social:", df_stream["Plataforma"].unique(), default=df_stream["Plataforma"].unique())
                     df_filtered = df_stream[df_stream["Plataforma"].isin(filtro_plat)]
                     st.dataframe(df_filtered[['Plataforma', 'Autor', 'Impacto Viral', 'Sentimiento', 'Texto', 'URL']], width="stretch")
-                else:
-                    st.info("Cargando publicaciones por red social...")
 
-            # TAB 3: SENTIMIENTO & COMPONENTES M.I.A.
+            # TAB 3: SENTIMIENTO & M.I.A.
             with tab_sent:
                 col_s1, col_s2 = st.columns(2)
 
@@ -338,7 +346,7 @@ else:
                     fig_pts.update_layout(template="plotly_white", showlegend=False)
                     st.plotly_chart(fig_pts, width="stretch")
 
-            # TAB 4: CONVERSATION STREAM (PUBLICACIONES MÁS VIRALES)
+            # TAB 4: CONVERSATION STREAM
             with tab_stream:
                 st.subheader("🔥 Publicaciones Más Virales Absolutas (Conversation Stream)")
                 if not df_stream.empty:
@@ -349,8 +357,6 @@ else:
                         },
                         width="stretch"
                     )
-                else:
-                    st.info("No se han capturado publicaciones para este tópico aún.")
 
     except Exception as e:
         st.error(f"Error procesando los datos de YouScan: {e}")
