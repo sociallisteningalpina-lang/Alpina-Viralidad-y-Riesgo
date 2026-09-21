@@ -25,7 +25,7 @@ st.set_page_config(
 )
 
 # Título e Introducción M.I.A.
-st.title("🚨 Alpina: Reporte de Crisis M.I.A. V3")
+st.title("🚨 Alpina: Reporte de Crisis M.I.A.")
 st.markdown("""
 > ℹ️ **M.I.A.** es el **Modelo de Incidentes Alpina** que nos permite determinar el riesgo de viralidad en redes sociales de cualquier tema en tiempo real.
 """)
